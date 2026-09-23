@@ -179,8 +179,7 @@ When a ship worker reports its PR - a `paused [at=…]: draft PR <url> held for 
 
 4. **Run the configured `pr_open` Jira transition.**
    Look up the transition name at `jira_transitions.pr_open` in `config/vessel/vessel.json` (falling back to `vessel/defaults/vessel.json` when the user file is absent).
-   Call `vessel/bin/vessel-jira.sh transition <ticket-key> <transition-name>` when a Jira key is known.
-   `vessel/bin/vessel-jira.sh` lands in Phase 4; record the intent and skip if not yet available.
+   Call `vessel/bin/vessel-jira.sh transition --ticket <ticket-key> --to <transition-name>` when a Jira key is known.
 
 5. **File the "mark ready and request reviewers" proposal** by calling:
    ```sh
@@ -350,14 +349,32 @@ A proposal that names "re-request review after fix" explicitly authorizes that r
 
 **On-accept actions by event kind:**
 
-- `review-comment` / `unresolved-thread`: dispatch Proposition Joe on the accepted items (`address` workflow); post accepted draft replies with `vessel/bin/vessel-reply.sh` (Phase 4); file follow-up tickets with `vessel/bin/vessel-jira.sh create` (Phase 4); re-request review after the fix is pushed.
-- `review-requested` / incremental: publish the pending review with accepted findings and submit with the accepted verdict using `vessel/bin/vessel-publish-review.sh` (Phase 4); resolve addressed threads if accepted.
+- `review-comment` / `unresolved-thread`: dispatch Proposition Joe on the accepted items (`address` workflow); post accepted draft replies with `vessel/bin/vessel-reply.sh`; file follow-up tickets with `vessel/bin/vessel-jira.sh create`; re-request review after the fix is pushed.
+- `review-requested` / incremental: publish the pending review with accepted findings and submit with the accepted verdict using `vessel/bin/vessel-publish-review.sh`; resolve addressed threads if accepted.
 - `ci-failed` (flaky): `gh run rerun --failed <run-id> --repo <repo>`.
 - `ci-failed` (real failure): dispatch Slim Charles with the Diagnose report as the plan.
 - `ci-failed` (unrelated): no action needed; acknowledge to the captain.
 - `conflicts`: dispatch Conflict Resolver (`conflicts` workflow).
 - `approved`: merge through `bin/fm-pr-merge.sh <task-id> <url>` using the task id from the recorded run for this PR.
-- `ticket-assigned`: dispatch Stringer for a plan (if the captain redirected) or Slim Charles with the plan (if accepted directly), or post the questions with `vessel/bin/vessel-jira.sh comment` (Phase 4).
+- `ticket-assigned`: dispatch Stringer for a plan (if the captain redirected) or Slim Charles with the plan (if accepted directly), or post the questions with `vessel/bin/vessel-jira.sh comment`.
 
-Scripts not yet available (Phase 4): `vessel/bin/vessel-publish-review.sh`, `vessel/bin/vessel-reply.sh`, `vessel/bin/vessel-jira.sh`.
-Name them in the proposal and in the on-accept step; skip their invocation with a note until Phase 4 lands.
+
+## 10. Outward mechanics
+
+These scripts run only after the captain's explicit accept or command.
+Do not call them in worker briefs or from any automatic path.
+Firstmate calls them directly after the captain accepts a proposal.
+Each script prints its dry-run plan and requires `--yes` to act.
+See the outward-action policy in `vessel/docs/team-plan.md`.
+
+- **`vessel/bin/vessel-publish-review.sh --task <id> [--home <fm-home>] [--findings <id,...>] [--submit COMMENT|REQUEST_CHANGES|APPROVE] [--resolve-threads <id,...>] [--yes]`**:
+  Submit a pending GitHub review built from `data/<task>/findings.json`.
+  Applies captain edits from `data/vessel/review-edits/<task>.json` when present.
+  Refuses when the PR head moved since the review, or a pending review already exists.
+- **`vessel/bin/vessel-reply.sh --task <id> [--home <fm-home>] [--items <id,...>] [--no-rerequest] [--yes]`**:
+  Post draft replies from `data/<task>/triage.json` to PR threads and re-request review.
+- **`vessel/bin/vessel-jira.sh pickup|transition|comment|create --ticket <KEY> [--to <name>] [--body <text>] [--summary <text>] [--home <fm-home>] [--yes]`**:
+  Wrap `acli jira workitem` using transition names from `jira_transitions` in `config/vessel/vessel.json`.
+  Default transitions: `pickup` → `"In Progress"`, `pr_open` → `"In Review"`.
+
+File format reference for findings.json, triage.json, and review-edits: `vessel/docs/prep-formats.md`.

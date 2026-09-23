@@ -27,6 +27,7 @@ Written by the Snoop agent to `data/<task>/findings.json`.
 ```
 
 `path` and `line` may be `null` for a general finding not tied to a specific line; such a finding goes in the review body rather than as a line comment.
+`side` is `"RIGHT"` (new version) or `"LEFT"` (old version); omit or `null` for general findings.
 
 ## triage.json (Triage of feedback on my PR)
 
@@ -57,6 +58,8 @@ Written by the Bunk (Triage) agent to `data/<task>/triage.json`.
 
 `thread_id` is the GraphQL review thread id when the item came from a review thread, or `null` for a standalone PR comment.
 `comment_id` is the REST comment id, or `null` when not applicable.
+`draft_reply` is non-null for `action: reply` and `action: pushback`; null otherwise.
+`fix_plan` is non-null for `action: fix`; null otherwise.
 `ticket` is present only for `followup` items.
 
 ## review-edits/<task>.json (captain edits made in vessel)
@@ -76,4 +79,5 @@ Written by the vessel TUI to `data/vessel/review-edits/<task>.json` when the cap
 ```
 
 `drop: true` removes a finding from the published review.
+Absent keys mean no edit: the original finding is used unchanged.
 This file is read by `vessel/bin/vessel-publish-review.sh` (Phase 4) before publishing.

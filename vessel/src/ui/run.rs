@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::app::{RunViewFocus, format_time};
+use crate::firstmate::runs::ReviewFinding;
 
 pub(super) fn render_run(frame: &mut Frame, area: Rect, app: &App) {
     let Some(view) = &app.run_view else {
@@ -54,6 +55,14 @@ pub(super) fn render_run(frame: &mut Frame, area: Rect, app: &App) {
                 "Terminal (closed)".to_owned()
             },
         ),
+        (
+            RunViewFocus::Findings,
+            if view.findings.is_empty() {
+                "Findings (none)".to_owned()
+            } else {
+                format!("Findings ({})", view.findings.len())
+            },
+        ),
     ] {
         let active = focus == view.focus;
         tabs.push(Span::styled(
@@ -78,6 +87,7 @@ pub(super) fn render_run(frame: &mut Frame, area: Rect, app: &App) {
             "No report. Scouts write data/<task>/report.md when they finish.",
         ),
         RunViewFocus::Terminal => terminal_lines(app, run),
+        RunViewFocus::Findings => findings_lines(&view.findings),
     };
     render_document(frame, sections[2], lines, view.scroll);
 }
@@ -259,4 +269,76 @@ fn terminal_lines(app: &App, run: &Run) -> Vec<Line<'static>> {
             Style::default().fg(MUTED_TEXT),
         )],
     }
+}
+
+fn findings_lines(findings: &[ReviewFinding]) -> Vec<Line<'static>> {
+    if findings.is_empty() {
+        return vec![Line::styled(
+            "No findings. A Snoop review scout writes data/<task>/findings.json.",
+            Style::default().fg(MUTED_TEXT),
+        )];
+    }
+    let active: Vec<_> = findings.iter().filter(|f| !f.dropped).collect();
+    let dropped: Vec<_> = findings.iter().filter(|f| f.dropped).collect();
+    let mut lines = Vec::new();
+    lines.push(section_heading(format!(
+        "Findings ({} active{})",
+        active.len(),
+        if dropped.is_empty() {
+            String::new()
+        } else {
+            format!(", {} dropped", dropped.len())
+        }
+    )));
+    lines.push(Line::raw(""));
+    for finding in &active {
+        let severity_color = match finding.severity.as_str() {
+            "blocking" => RED,
+            "nit" => MUTED_TEXT,
+            _ => CORAL,
+        };
+        let location = match (&finding.path, finding.line) {
+            (Some(path), Some(line)) => format!("{path}:{line}"),
+            (Some(path), None) => path.clone(),
+            _ => "(general)".to_owned(),
+        };
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("[{}] ", finding.severity),
+                Style::default()
+                    .fg(severity_color)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(format!("{location}  "), Style::default().fg(MUTED_TEXT)),
+            Span::styled(format!("#{}", finding.id), Style::default().fg(MUTED_TEXT)),
+        ]));
+        for body_line in finding.body.lines() {
+            lines.push(Line::styled(
+                format!("  {body_line}"),
+                Style::default().fg(TEXT),
+            ));
+        }
+        lines.push(Line::raw(""));
+    }
+    if !dropped.is_empty() {
+        lines.push(section_heading("Dropped"));
+        lines.push(Line::raw(""));
+        for finding in &dropped {
+            let location = match (&finding.path, finding.line) {
+                (Some(path), Some(line)) => format!("{path}:{line}"),
+                (Some(path), None) => path.clone(),
+                _ => "(general)".to_owned(),
+            };
+            lines.push(Line::styled(
+                format!(
+                    "  #{} {}  {}",
+                    finding.id,
+                    location,
+                    finding.body.lines().next().unwrap_or("")
+                ),
+                Style::default().fg(MUTED_TEXT),
+            ));
+        }
+    }
+    lines
 }

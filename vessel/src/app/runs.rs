@@ -1,9 +1,11 @@
 use super::*;
+use crate::firstmate::runs::load_review_findings;
 
 impl App {
     pub(crate) fn open_run(&mut self, task: String, created_at: Option<u64>) {
         let brief = self.fleet.document(&task, "brief.md");
         let report = self.fleet.document(&task, "report.md");
+        let findings = load_review_findings(&self.config.data_dir(), &task);
         self.fleet.open_peek(&task);
         self.run_view = Some(RunViewState {
             task,
@@ -12,6 +14,7 @@ impl App {
             scroll: 0,
             brief,
             report,
+            findings,
         });
     }
 
@@ -58,11 +61,12 @@ impl App {
     }
 
     pub(crate) fn toggle_run_view_focus(&mut self, offset: isize) {
-        const ORDER: [RunViewFocus; 4] = [
+        const ORDER: [RunViewFocus; 5] = [
             RunViewFocus::Status,
             RunViewFocus::Brief,
             RunViewFocus::Report,
             RunViewFocus::Terminal,
+            RunViewFocus::Findings,
         ];
         if let Some(view) = &mut self.run_view {
             let current = ORDER
@@ -86,6 +90,7 @@ impl App {
         if let Some(view) = &mut self.run_view {
             view.brief = self.fleet.document(&view.task, "brief.md");
             view.report = self.fleet.document(&view.task, "report.md");
+            view.findings = load_review_findings(&self.config.data_dir(), &view.task);
         }
         if matches!(self.jira_detail, Some(JiraDetailState::Ready(_))) {
             self.refresh_ticket_plans();
