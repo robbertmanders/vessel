@@ -271,11 +271,12 @@ If it does, include the previous `pr_head` and the previous `report.md` path in 
 
 ### 9.6 Dispatch the preparation scout
 
-If the event type is disabled in autoprep (`autoprep.<kind>` is false) or the `max_concurrent` cap is reached, skip preparation and go directly to proposal (section 9.8) with a note that preparation was skipped.
+If the event type is disabled in autoprep (`autoprep.<kind>` is false), the `max_concurrent` cap is reached, or no configured agent has the preparation mode from section 9.5, skip preparation and go directly to proposal (section 9.8) with a note that preparation was skipped.
 
 If preparation is needed:
 
 1. **Resolve the agent** by mode from `config/vessel/agents.json` (falling back to `vessel/defaults/agents.json`) using the same logic as section 2.
+   When no agent has that mode, skip preparation and go directly to proposal (section 9.8) with a note that preparation was skipped instead of asking, because the Radar loop cannot wait on a question.
 
 2. **Compute the task id:** `<workflow>-<slug>`, e.g. `triage-webapp-42`.
    If `data/<id>/` already exists, append `-2`, `-3`, and so on.
@@ -316,6 +317,9 @@ bin/fm-captain-hold.sh hold proposal-<event-slug> \
   --title "<title>" \
   --reason "<recommendation>"
 ```
+
+Ack the event only after that hold command succeeds: `vessel radar ack <event-id>`.
+When the hold fails, leave the event pending so the next loop files the proposal again instead of dropping the event.
 
 Then send one self-contained chat message to the captain containing:
 - What happened, with the full URL.
