@@ -175,6 +175,10 @@ where
             app.open_activity();
             return Ok(false);
         }
+        if key.code == KeyCode::Char('r') && app.overview_section == OverviewSection::Crew {
+            app.mark_selected_overview_run_read();
+            return Ok(false);
+        }
         if matches!(key.code, KeyCode::Char('r' | 'R') | KeyCode::F(5)) {
             app.refresh_all();
             return Ok(false);

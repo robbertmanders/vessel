@@ -44,6 +44,10 @@ impl Config {
         self.data_dir().join("vessel/runs.jsonl")
     }
 
+    pub(crate) fn read_runs_file(&self) -> PathBuf {
+        self.vessel_dir().join("read.json")
+    }
+
     /// What the captain sees in vessel, for firstmate (see `context.rs`).
     pub(crate) fn context_file(&self) -> PathBuf {
         self.data_dir().join("vessel/context.json")
