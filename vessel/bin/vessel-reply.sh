@@ -68,7 +68,7 @@ reply_items=$(jq -c \
      select(.draft_reply != null and .draft_reply != "") |
      select(.action == "reply" or .action == "pushback") |
      if $filter != "" then
-       select([$filter | split(",")[] | . == ..id] | any)
+       select(.id as $id | [$filter | split(",")[] | . == $id] | any)
      else . end
    ]' "$triage_file")
 
