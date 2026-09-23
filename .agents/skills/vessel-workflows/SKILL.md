@@ -179,7 +179,7 @@ When a ship worker reports its PR - a `paused [at=…]: draft PR <url> held for 
 
 4. **Run the configured `pr_open` Jira transition.**
    Look up the transition name at `jira_transitions.pr_open` in `config/vessel/vessel.json` (falling back to `vessel/defaults/vessel.json` when the user file is absent).
-   Call `vessel/bin/vessel-jira.sh transition --ticket <ticket-key> --to <transition-name>` when a Jira key is known.
+   Call `vessel/bin/vessel-jira.sh transition --ticket <ticket-key> --to <transition-name> --yes` when a Jira key is known.
 
 5. **File the "mark ready and request reviewers" proposal** by calling:
    ```sh
