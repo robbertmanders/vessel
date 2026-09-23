@@ -77,6 +77,7 @@ pub(crate) const fn run_status_symbol(status: RunStatus) -> &'static str {
         RunStatus::Blocked | RunStatus::Failed => "✕",
         RunStatus::Paused | RunStatus::Idle => "○",
         RunStatus::Done | RunStatus::Merged | RunStatus::Completed => "✓",
+        RunStatus::InReview => "◑",
         RunStatus::Closed | RunStatus::Unknown => "●",
     }
 }
@@ -87,6 +88,7 @@ pub(crate) const fn run_status_color(status: RunStatus) -> Color {
         RunStatus::NeedsDecision => CORAL,
         RunStatus::Blocked | RunStatus::Failed => RED,
         RunStatus::Done | RunStatus::Merged | RunStatus::Completed => GREEN,
+        RunStatus::InReview => BLUE,
         RunStatus::Paused | RunStatus::Idle | RunStatus::Closed | RunStatus::Unknown => MUTED_TEXT,
     }
 }
