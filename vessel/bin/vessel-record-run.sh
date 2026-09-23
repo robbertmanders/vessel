@@ -15,8 +15,8 @@
 #   --agent <name> --harness <name> --model <name> --effort <level>
 #   --project <name> --title <text>
 #   --ticket <KEY> --repo <owner/repo> --pr <number> --pr-url <url> --pr-head <sha>
-#   --plan-task <task-id> --request-id <id>
-# Workflows: implement plan review address conflicts description ticket free
+#   --plan-task <task-id> --request-id <id> --radar-event <event-id>
+# Workflows: implement plan review address conflicts description ticket free triage diagnose
 # Update states: handed-off
 set -eu
 
@@ -28,7 +28,7 @@ usage() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//' >&2; }
 
 mode="spawn"
 task="" workflow="" agent="" harness="" model="" effort="" project="" title=""
-ticket="" repo="" pr="" pr_url="" pr_head="" plan_task="" request_id=""
+ticket="" repo="" pr="" pr_url="" pr_head="" plan_task="" request_id="" radar_event=""
 update_task="" update_state=""
 
 while [ $# -gt 0 ]; do
@@ -50,6 +50,7 @@ while [ $# -gt 0 ]; do
     --pr-head) pr_head="$2"; shift 2 ;;
     --plan-task) plan_task="$2"; shift 2 ;;
     --request-id) request_id="$2"; shift 2 ;;
+    --radar-event) radar_event="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "vessel-record-run: unknown argument: $1" >&2; usage; exit 2 ;;
   esac
@@ -83,7 +84,7 @@ if [ -z "$task" ] || [ -z "$workflow" ]; then
   exit 2
 fi
 case "$workflow" in
-  implement|plan|review|address|conflicts|description|ticket|free) ;;
+  implement|plan|review|address|conflicts|description|ticket|free|triage|diagnose) ;;
   *) echo "vessel-record-run: unknown workflow: $workflow" >&2; exit 2 ;;
 esac
 if [ -n "$pr" ] && ! [ "$pr" -eq "$pr" ] 2>/dev/null; then
@@ -96,7 +97,7 @@ jq -nc \
   --arg harness "$harness" --arg model "$model" --arg effort "$effort" \
   --arg project "$project" --arg title "$title" --arg ticket "$ticket" \
   --arg repo "$repo" --arg pr "$pr" --arg pr_url "$pr_url" --arg pr_head "$pr_head" \
-  --arg plan_task "$plan_task" --arg request_id "$request_id" \
+  --arg plan_task "$plan_task" --arg request_id "$request_id" --arg radar_event "$radar_event" \
   --argjson ts "$(date +%s)" '
   def opt: if . == "" then null else . end;
   {v: 1, ts: $ts, task: $task, workflow: $workflow,
@@ -104,5 +105,6 @@ jq -nc \
    project: ($project|opt), title: ($title|opt), ticket_key: ($ticket|opt), repo: ($repo|opt),
    pr_number: (if $pr == "" then null else ($pr|tonumber) end),
    pr_url: ($pr_url|opt), pr_head: ($pr_head|opt),
-   plan_task: ($plan_task|opt), request_id: ($request_id|opt)}' >> "$RUNS"
+   plan_task: ($plan_task|opt), request_id: ($request_id|opt),
+   radar_event: ($radar_event|opt)}' >> "$RUNS"
 echo "recorded $task ($workflow) in $RUNS"

@@ -1,0 +1,17 @@
+{
+  "autoprep": {
+    "max_concurrent": 3,
+    "review-comment": true,
+    "unresolved-thread": true,
+    "review-requested": true,
+    "ci-failed": true,
+    "conflicts": true,
+    "approved": true,
+    "draft-handoff": true,
+    "ticket-assigned": true
+  },
+  "jira_transitions": {
+    "pickup": "In Progress",
+    "pr_open": "In Review"
+  }
+}
