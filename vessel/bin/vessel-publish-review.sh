@@ -75,9 +75,27 @@ if [ -z "$owner_repo" ] || [ -z "$pr_number" ]; then
   exit 1
 fi
 
+if [ -z "$review_head" ] || [ "$review_head" = "null" ]; then
+  echo "vessel-publish-review: findings.json has no pr_head" >&2
+  echo "Re-run the review scout before publishing." >&2
+  exit 1
+fi
+
 # Check whether the PR head has moved since the review.
-current_head=$(gh pr view "$pr_url" --json headRefOid --jq .headRefOid 2>/dev/null || true)
-if [ -n "$current_head" ] && [ "$current_head" != "$review_head" ]; then
+# Fail closed: publication requires a successful lookup whose result matches
+# the reviewed head. A failed or empty lookup stops the publish instead of
+# being treated as "head unchanged".
+if ! current_head=$(gh pr view "$pr_url" --json headRefOid --jq .headRefOid 2>/dev/null); then
+  echo "vessel-publish-review: could not determine the current PR head for $pr_url" >&2
+  echo "Refusing to publish without confirming the head matches the reviewed head." >&2
+  exit 1
+fi
+if [ -z "$current_head" ] || [ "$current_head" = "null" ]; then
+  echo "vessel-publish-review: the current PR head lookup for $pr_url returned empty" >&2
+  echo "Refusing to publish without confirming the head matches the reviewed head." >&2
+  exit 1
+fi
+if [ "$current_head" != "$review_head" ]; then
   echo "vessel-publish-review: the PR head has moved since this review" >&2
   echo "  reviewed head: $review_head" >&2
   echo "  current head:  $current_head" >&2
@@ -86,16 +104,35 @@ if [ -n "$current_head" ] && [ "$current_head" != "$review_head" ]; then
 fi
 
 # Check for an existing pending review from the captain.
-current_user=$(gh api /user --jq .login 2>/dev/null || true)
-if [ -n "$current_user" ]; then
-  pending=$(gh api "/repos/$owner_repo/pulls/$pr_number/reviews" \
-    --jq "[.[] | select(.state == \"PENDING\" and .user.login == \"$current_user\")] | length" \
-    2>/dev/null || echo "0")
-  if [ "$pending" != "0" ] && [ "$pending" != "" ]; then
-    echo "vessel-publish-review: you already have a pending review on $pr_url" >&2
-    echo "Submit or dismiss the existing pending review before creating a new one." >&2
-    exit 1
-  fi
+# Fail closed: publication requires successfully establishing both the
+# authenticated user and the pending-review state. A failed or empty lookup
+# stops the publish instead of skipping the pending-review check.
+if ! current_user=$(gh api /user --jq .login 2>/dev/null); then
+  echo "vessel-publish-review: could not determine the authenticated user" >&2
+  echo "Refusing to publish without checking for a pending review." >&2
+  exit 1
+fi
+if [ -z "$current_user" ] || [ "$current_user" = "null" ]; then
+  echo "vessel-publish-review: the authenticated-user lookup returned empty" >&2
+  echo "Refusing to publish without checking for a pending review." >&2
+  exit 1
+fi
+if ! pending=$(gh api "/repos/$owner_repo/pulls/$pr_number/reviews" \
+  --jq "[.[] | select(.state == \"PENDING\" and .user.login == \"$current_user\")] | length" \
+  2>/dev/null); then
+  echo "vessel-publish-review: could not check $pr_url for a pending review" >&2
+  echo "Refusing to publish without confirming no pending review exists." >&2
+  exit 1
+fi
+if [ -z "$pending" ] || [ "$pending" = "null" ]; then
+  echo "vessel-publish-review: the pending-review lookup for $pr_url returned empty" >&2
+  echo "Refusing to publish without confirming no pending review exists." >&2
+  exit 1
+fi
+if [ "$pending" != "0" ]; then
+  echo "vessel-publish-review: you already have a pending review on $pr_url" >&2
+  echo "Submit or dismiss the existing pending review before creating a new one." >&2
+  exit 1
 fi
 
 # Determine the event (verdict).
