@@ -210,6 +210,13 @@ This phase changes `.agents/skills/vessel-workflows/SKILL.md` §5-§7.
 - **Merging after cleanup:** `bin/fm-pr-merge.sh` is the required merge path, but the job's record is gone after cleanup.
   Check whether it can merge a PR without a job record. If not, keep the record alive until merge or close for PRs the captain merges himself.
   Never fall back to calling `gh pr merge` around it.
+  **Decision (Phase 3):** `bin/fm-pr-merge.sh` requires `state/<id>.meta` (verified: lines 327-330 of the script).
+  Decision: keep jobs alive until the PR is merged or closed.
+  After handoff the worker agent is stopped with `bin/fm-control.sh <task> exit` but the task record and isolated copy are preserved.
+  `bin/fm-pr-check.sh <task> <url>` is run once the PR is marked ready (it refuses drafts).
+  Merge is through `bin/fm-pr-merge.sh <task> <url>` on the captain's accept.
+  Cleanup is with `bin/fm-teardown.sh` when the PR is reported merged or closed.
+  Address and conflicts follow-ups on a live job reuse that job via `bin/fm-control.sh <task> relaunch` instead of a new task.
 - **Scope of acceptance:** does accepting a Triage proposal also authorize the follow-up "re-request review"? The proposal text should name it explicitly, so it does.
 
 ## Fork hygiene (every phase)

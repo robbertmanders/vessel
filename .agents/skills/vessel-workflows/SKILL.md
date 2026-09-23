@@ -5,8 +5,9 @@ description: >-
   Use when the captain asks to implement or plan a Jira ticket, review a pull request, address PR feedback,
   resolve PR merge conflicts, update a PR description, or create a Jira ticket, including loose references such
   as "this PR", "that ticket", or "my PRs" that point at what the captain sees in vessel; when a request names a vessel
-  agent (Snoop, Slim Charles, Proposition Joe, Conflict Resolver, Stringer, Ticket Creator, PR Description, or
-  any agent in config/vessel/agents.json); and for every inbox note that starts with `[vessel]`.
+  agent (Snoop, Slim Charles, Proposition Joe, Conflict Resolver, Stringer, Ticket Creator, PR Description, Bunk, Freamon, or
+  any agent in config/vessel/agents.json); for every inbox note that starts with `[vessel]`; and on every
+  `check: vessel-radar:` notification (the Radar loop, section 9).
 user-invocable: false
 metadata:
   internal: true
@@ -163,7 +164,7 @@ When the worker reports the PR ready (a `paused:` line for `implement`, a `done:
 When a ship worker reports its PR - a `paused [at=…]: draft PR <url> held for the captain` for `implement`, or `done [at=…]: pushed to <url>` for `address` and `conflicts` - carry out these steps in order:
 
 1. **Do not run `fm-pr-check.sh`.**
-   The merge poll is not armed for vessel ship tasks.
+   The merge poll is not armed at handoff; it is armed later, after the captain marks the PR ready (step 6 below).
 
 2. **Record the handoff** by calling:
    ```sh
@@ -172,20 +173,193 @@ When a ship worker reports its PR - a `paused [at=…]: draft PR <url> held for 
    ```
    Read the PR URL and head from the status line or from `gh pr view <url> --json url,headRefOid`.
 
-3. **Clean up** with `bin/fm-teardown.sh <task-id>`.
-   The branch is already pushed to the remote, so teardown accepts it as landed without `--force`.
+3. **Stop the worker agent** with `bin/fm-control.sh <task-id> exit`.
+   This stops the agent process while keeping the task record and isolated copy alive.
+   Do NOT run `bin/fm-teardown.sh` here: the task record must stay alive until the PR is merged or closed, because `bin/fm-pr-merge.sh` requires the task metadata.
 
 4. **Run the configured `pr_open` Jira transition.**
-   Look up the transition name at `jira_transitions.pr_open` in `config/vessel/vessel.json`.
-   Record the intent now; the Jira wrapper lands in Phase 4.
+   Look up the transition name at `jira_transitions.pr_open` in `config/vessel/vessel.json` (falling back to `vessel/defaults/vessel.json` when the user file is absent).
+   Call `vessel/bin/vessel-jira.sh transition --ticket <ticket-key> --to <transition-name>` when a Jira key is known.
 
-5. **File the "mark ready and request reviewers" proposal.**
-   Hold a captain call via `bin/fm-captain-hold.sh hold <proposal-id> --title "Mark PR ready: <title>" --reason "Mark <url> ready and request review from CODEOWNERS or recent reviewers"`.
-   The `fm-captain-hold.sh` mechanics land in Phase 3; record the intent now.
+5. **File the "mark ready and request reviewers" proposal** by calling:
+   ```sh
+   bin/fm-captain-hold.sh hold draft-handoff-<pr-slug> \
+     --title "Mark PR ready: <pr-title>" \
+     --reason "Mark <url> ready for review and request review from CODEOWNERS or recent reviewers"
+   ```
+   The proposal id is `draft-handoff-<pr-slug>` where `<pr-slug>` is the PR number extracted from the URL (e.g. `draft-handoff-pr-42`).
+
+6. **When the captain accepts the "mark ready" proposal:**
+   - Answer the hold: `bin/fm-captain-hold.sh answer draft-handoff-<pr-slug> --decision-file <path>`.
+   - Run `gh pr ready <url> --repo <owner/repo>` to mark the PR ready for review.
+   - Request reviewers from CODEOWNERS or recent contributors: `gh pr edit <url> --add-reviewer <reviewer> --repo <owner/repo>`.
+   - Arm the merge poll: `bin/fm-pr-check.sh <task-id> <url>` (it refuses drafts, so this only succeeds after step above).
+   - For address and conflicts follow-ups on the same PR: reuse the existing task via `bin/fm-control.sh <task-id> relaunch` instead of creating a new task.
+
+7. **When the PR is merged or closed** (merge poll fires or captain reports it):
+   - Clean up with `bin/fm-teardown.sh <task-id>`.
+   The branch is already pushed to the remote, so teardown accepts it as landed without `--force`.
 
 The vessel TUI shows the run as "in review" (blue `◑`) from this point until the ledger records a merge or the captain answers the proposal.
 
-## 9. Outward mechanics
+## 9. Radar loop
+
+**Trigger:** a `check:` notification whose reason line starts with `vessel-radar:`.
+This section and nothing else processes `vessel-radar:` notifications.
+Do not poll, scan, or read radar state outside this trigger.
+
+### 9.1 Read pending events
+
+```sh
+vessel radar pending --json
+```
+
+This prints the current pending events as a JSON array.
+Each event has `id`, `kind`, `target`, and `anchor` fields.
+An empty array means nothing to do; skip to the end of this section.
+
+### 9.2 Read autoprep config
+
+Read `config/vessel/vessel.json` with `jq`, falling back to `vessel/defaults/vessel.json` when the user file is absent.
+The relevant keys are `autoprep.max_concurrent` (default 3) and `autoprep.<kind>` (default true for every kind).
+
+Count active preparation scouts: runs in `data/vessel/runs.jsonl` whose `workflow` is `triage` or `diagnose` and that have no matching `handed-off` update record, and whose firstmate task is not yet cleaned up.
+Compare against `max_concurrent`.
+
+While the away posture (`state/.afk-contract`) is present, preparation still runs.
+Proposals filed during away mode wait in OPEN DECISIONS and are surfaced on the captain's return.
+
+### 9.3 Compute the event slug
+
+For each pending event, compute the `event-slug` used in proposal IDs and task IDs:
+
+- GitHub PR URL (`https://github.com/<owner>/<repo>/pull/<n>`): extract `<repo>-<n>`, e.g. `webapp-42`.
+- Jira ticket key (`PROJ-123`): lowercase the key, e.g. `proj-123`.
+- Fallback: take the last path segment of the target.
+
+The full event slug is `<kind>-<slug>`, e.g. `ci-failed-webapp-42`.
+
+### 9.4 Check for a supersede
+
+Before processing each event, check whether an open proposal for the same target already exists.
+Look for any open captain call whose id matches `proposal-<any-kind>-<slug>` where the slug matches this target.
+Use `bin/fm-captain-hold.sh open proposal-<old-kind>-<slug>` to test each candidate.
+
+If an open proposal for the same target exists:
+1. Cancel any in-progress preparation scout for the old event: `bin/fm-control.sh <old-scout-task> exit`.
+2. Answer the old proposal as superseded:
+   ```sh
+   printf 'superseded by %s at anchor %s\n' "<new-kind>" "<new-anchor>" > /tmp/supersede-decision.txt
+   bin/fm-captain-hold.sh answer proposal-<old-kind>-<slug> --decision-file /tmp/supersede-decision.txt
+   ```
+
+### 9.5 Pick the playbook row
+
+| Event kind | Preparation agent mode | Notes |
+|---|---|---|
+| `review-comment` | Triage | Both `review-comment` and `unresolved-thread` on the same PR may share one Triage run |
+| `unresolved-thread` | Triage | See above |
+| `review-requested` | Review (Snoop) | Use incremental mode if a previous Snoop report exists for this PR |
+| `ci-failed` | Diagnose | |
+| `conflicts` | none | Go straight to proposal |
+| `approved` | none | Go straight to proposal |
+| `draft-handoff` | none | Go straight to proposal (the Handoff section handles this, not the Radar loop) |
+| `ticket-assigned` | Plan (Stringer) | |
+
+For `review-requested` in incremental mode, check whether `data/review-<pr-slug>/findings.json` exists from a previous Snoop run.
+If it does, include the previous `pr_head` and the previous `report.md` path in the brief's `## Captain's intent`.
+
+### 9.6 Dispatch the preparation scout
+
+If the event type is disabled in autoprep (`autoprep.<kind>` is false) or the `max_concurrent` cap is reached, skip preparation and go directly to proposal (section 9.8) with a note that preparation was skipped.
+
+If preparation is needed:
+
+1. **Resolve the agent** by mode from `config/vessel/agents.json` (falling back to `vessel/defaults/agents.json`) using the same logic as section 2.
+
+2. **Compute the task id:** `<workflow>-<slug>`, e.g. `triage-webapp-42`.
+   If `data/<id>/` already exists, append `-2`, `-3`, and so on.
+
+3. **Resolve the project** using section 3's logic.
+
+4. **Write the brief** with `bin/fm-brief.sh <id> <project> --scout`.
+   Fill `## Captain's intent` with the event description, the full PR/ticket URL, and any incremental-mode context.
+   Fill `## Firstmate spec` with an `Agent: <name>` line, `Agent instructions:` followed by the agent's instructions, and the workflow contract from section 5.
+
+5. **Spawn** with `bin/fm-spawn.sh <id> <project-dir>` plus the agent's `--harness`, `--model`, and `--effort`.
+
+6. **Record the run:**
+   ```sh
+   vessel/bin/vessel-record-run.sh --task <id> --workflow <workflow> --agent "<name>" \
+     --harness <harness> --model <model> --effort <effort> --project <project> \
+     --title "<title>" [--repo <owner/repo>] [--pr <n>] [--radar-event <event-id>]
+   ```
+
+7. **Ack the event:** `vessel radar ack <event-id>`.
+
+### 9.7 When a preparation scout finishes
+
+When a preparation scout task (workflow `triage`, `diagnose`, `review`, or `plan` with `radar_event` set) reports `done:` via a `signal:` wake:
+
+1. Read `data/<task>/report.md`.
+2. For a Triage scout: also read `data/<task>/triage.json` (schema: `vessel/docs/prep-formats.md`).
+   Extract the count of items by action type.
+3. For a Snoop scout: also read `data/<task>/findings.json` (schema: `vessel/docs/prep-formats.md`).
+   Extract the suggested verdict and finding counts.
+4. File a proposal (section 9.8).
+
+### 9.8 File a proposal
+
+Run:
+```sh
+bin/fm-captain-hold.sh hold proposal-<event-slug> \
+  --title "<title>" \
+  --reason "<recommendation>"
+```
+
+Then send one self-contained chat message to the captain containing:
+- What happened, with the full URL.
+- What the preparation found, briefly (verdict, finding counts, or action breakdown).
+- The recommendation.
+- The alternatives.
+- "Accept?"
+
+Proposal id: `proposal-<event-slug>` where `event-slug` is `<kind>-<slug>` as defined in section 9.3.
+
+**Typical proposals by event kind:**
+
+- `review-comment` / `unresolved-thread`: "Fix N (plan attached), reply to M (draft), push back on P (draft), file Q as follow-up ticket. Accepting also authorizes re-requesting review after the fix is pushed. Accept?"
+- `review-requested`: "Request changes: N blocking, M nits (pending review ready). Accept?" or "Approve: all N of your threads addressed. Accept?"
+- `ci-failed`: "Flaky test - rerun. Accept?" or "Real failure - fix (plan attached). Accept?" or "Unrelated failure on main. Accept?"
+- `conflicts`: "Resolve merge conflicts with Conflict Resolver. Accept?"
+- `approved`: "PR is approved and checks are green - ready to merge. Accept?"
+- `ticket-assigned`: "Pick up PROJ-123 with this plan (attached). Accept?" or "Ticket is unclear - post these questions (draft attached). Accept?"
+
+### 9.9 Captain's answer
+
+When the captain accepts or redirects a proposal:
+
+1. Write the captain's words to a file.
+2. Answer the hold: `bin/fm-captain-hold.sh answer proposal-<event-slug> --decision-file <path>`.
+3. Carry out exactly the named actions from the on-accept column below.
+4. Release the hold when done.
+
+Accepting counts as the captain's explicit command for exactly the actions named in the recommendation, nothing broader.
+A proposal that names "re-request review after fix" explicitly authorizes that re-request when accepted.
+
+**On-accept actions by event kind:**
+
+- `review-comment` / `unresolved-thread`: dispatch Proposition Joe on the accepted items (`address` workflow); post accepted draft replies with `vessel/bin/vessel-reply.sh`; file follow-up tickets with `vessel/bin/vessel-jira.sh create`; re-request review after the fix is pushed.
+- `review-requested` / incremental: publish the pending review with accepted findings and submit with the accepted verdict using `vessel/bin/vessel-publish-review.sh`; resolve addressed threads if accepted.
+- `ci-failed` (flaky): `gh run rerun --failed <run-id> --repo <repo>`.
+- `ci-failed` (real failure): dispatch Slim Charles with the Diagnose report as the plan.
+- `ci-failed` (unrelated): no action needed; acknowledge to the captain.
+- `conflicts`: dispatch Conflict Resolver (`conflicts` workflow).
+- `approved`: merge through `bin/fm-pr-merge.sh <task-id> <url>` using the task id from the recorded run for this PR.
+- `ticket-assigned`: dispatch Stringer for a plan (if the captain redirected) or Slim Charles with the plan (if accepted directly), or post the questions with `vessel/bin/vessel-jira.sh comment`.
+
+
+## 10. Outward mechanics
 
 These scripts run only after the captain's explicit accept or command.
 Do not call them in worker briefs or from any automatic path.
@@ -193,13 +367,13 @@ Firstmate calls them directly after the captain accepts a proposal.
 Each script prints its dry-run plan and requires `--yes` to act.
 See the outward-action policy in `vessel/docs/team-plan.md`.
 
-- **`vessel/bin/vessel-publish-review.sh --task <id> [--findings <id,...>] [--submit COMMENT|REQUEST_CHANGES|APPROVE] [--resolve-threads <id,...>] [--yes]`**:
+- **`vessel/bin/vessel-publish-review.sh --task <id> [--home <fm-home>] [--findings <id,...>] [--submit COMMENT|REQUEST_CHANGES|APPROVE] [--resolve-threads <id,...>] [--yes]`**:
   Submit a pending GitHub review built from `data/<task>/findings.json`.
   Applies captain edits from `data/vessel/review-edits/<task>.json` when present.
   Refuses when the PR head moved since the review, or a pending review already exists.
-- **`vessel/bin/vessel-reply.sh --task <id> [--items <id,...>] [--no-rerequest] [--yes]`**:
+- **`vessel/bin/vessel-reply.sh --task <id> [--home <fm-home>] [--items <id,...>] [--no-rerequest] [--yes]`**:
   Post draft replies from `data/<task>/triage.json` to PR threads and re-request review.
-- **`vessel/bin/vessel-jira.sh pickup|transition|comment|create --ticket <KEY> [options] [--yes]`**:
+- **`vessel/bin/vessel-jira.sh pickup|transition|comment|create --ticket <KEY> [--to <name>] [--body <text>] [--summary <text>] [--home <fm-home>] [--yes]`**:
   Wrap `acli jira workitem` using transition names from `jira_transitions` in `config/vessel/vessel.json`.
   Default transitions: `pickup` → `"In Progress"`, `pr_open` → `"In Review"`.
 

@@ -37,6 +37,10 @@ pub(crate) fn run(args: &[String]) -> io::Result<()> {
         "check" => run_check(home),
         "arm" => run_arm(home),
         "disarm" => run_disarm(home),
+        "pending" => {
+            let json = rest.iter().any(|a| a == "--json");
+            run_pending(home, json)
+        }
         "ack" => {
             let ids: Vec<String> = rest
                 .iter()
@@ -47,7 +51,7 @@ pub(crate) fn run(args: &[String]) -> io::Result<()> {
         }
         other => {
             eprintln!("vessel radar: unknown subcommand {other}");
-            eprintln!("usage: vessel radar check|arm|disarm|ack [--home <path>]");
+            eprintln!("usage: vessel radar check|arm|disarm|pending|ack [--home <path>]");
             std::process::exit(2);
         }
     }
@@ -225,6 +229,52 @@ fn summarize_kinds(kinds: &[&str]) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+// --- pending ---
+
+fn run_pending(home: Option<PathBuf>, json: bool) -> io::Result<()> {
+    let (fm_home, _fm_root) = resolve_fm_home(home).map_err(io::Error::other)?;
+    let radar_path = fm_home.join("data/vessel/radar.json");
+
+    let text = match fs::read_to_string(&radar_path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if json {
+                println!("[]");
+            }
+            return Ok(());
+        }
+        Err(error) => {
+            return Err(io::Error::other(format!(
+                "vessel radar: could not read radar state: {error}"
+            )));
+        }
+    };
+
+    let state: Value = serde_json::from_str(&text)
+        .map_err(|e| io::Error::other(format!("vessel radar: could not parse radar state: {e}")))?;
+
+    let pending = state["pending"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::Value::Array(pending.to_vec()))
+                .unwrap_or_else(|_| "[]".to_owned())
+        );
+    } else {
+        for event in pending {
+            let id = event["id"].as_str().unwrap_or("-");
+            let kind = event["kind"].as_str().unwrap_or("-");
+            let target = event["target"].as_str().unwrap_or("-");
+            println!("{id} {kind} {target}");
+        }
+    }
+    Ok(())
 }
 
 // --- arm ---

@@ -331,6 +331,51 @@ fn teardown_accepts_pushed_branch_without_force() {
 }
 
 #[test]
+fn captain_hold_script_accepts_hold_and_answer_flags() {
+    // vessel-workflows relies on fm-captain-hold.sh hold and answer.
+    // Verify the script exists, is executable, and exposes the required
+    // subcommands and flags in its dispatch and header.
+    let script_path = firstmate_root().join("bin/fm-captain-hold.sh");
+    assert!(script_path.is_file(), "bin/fm-captain-hold.sh is missing");
+    let perms = std::fs::metadata(&script_path).unwrap().permissions();
+    use std::os::unix::fs::PermissionsExt;
+    assert!(
+        perms.mode() & 0o111 != 0,
+        "bin/fm-captain-hold.sh is not executable"
+    );
+
+    let source = read("bin/fm-captain-hold.sh");
+    // The dispatch at the end of the script must route both subcommands.
+    assert!(
+        source.contains("hold) shift; command_hold"),
+        "bin/fm-captain-hold.sh no longer dispatches the 'hold' subcommand"
+    );
+    assert!(
+        source.contains("answer) shift; command_answer"),
+        "bin/fm-captain-hold.sh no longer dispatches the 'answer' subcommand"
+    );
+    // The hold subcommand must accept --reason and --title.
+    assert!(
+        source.contains("--reason"),
+        "bin/fm-captain-hold.sh hold no longer accepts --reason"
+    );
+    assert!(
+        source.contains("--title"),
+        "bin/fm-captain-hold.sh hold no longer accepts --title"
+    );
+    // The answer subcommand must accept --decision-file.
+    assert!(
+        source.contains("--decision-file"),
+        "bin/fm-captain-hold.sh answer no longer accepts --decision-file"
+    );
+    // The open subcommand is used to check whether a proposal is still open.
+    assert!(
+        source.contains("open) shift; command_open"),
+        "bin/fm-captain-hold.sh no longer dispatches the 'open' subcommand"
+    );
+}
+
+#[test]
 fn paused_status_prefix_is_defined() {
     // vessel relies on paused: being the vocabulary for a deliberate external wait,
     // distinct from blocked:, so the watcher does not wedge-escalate an idle pane.

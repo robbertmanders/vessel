@@ -1,10 +1,11 @@
-# vessel preparation file formats
+# Preparation output formats
 
-These are the authoritative schemas for the files that Phase 3 scouts write and Phase 4 outward scripts consume.
-Phase 3 (`vessel-workflows` radar loop and scout contracts) writes them.
-Phase 4 (`vessel-publish-review.sh`, `vessel-reply.sh`) reads them.
+These are the shared file formats written by preparation scouts (Phase 3) and read by the act phase (Phase 4).
+Phase 3 is the single owner of the schema; Phase 4 links here and must not restate it.
 
-## `data/<task>/findings.json` (Snoop review output)
+## findings.json (Snoop review)
+
+Written by the Snoop agent to `data/<task>/findings.json`.
 
 ```json
 {
@@ -19,16 +20,18 @@ Phase 4 (`vessel-publish-review.sh`, `vessel-reply.sh`) reads them.
       "path": "src/x.rs",
       "line": 42,
       "side": "RIGHT",
-      "body": "comment text"
+      "body": "…"
     }
   ]
 }
 ```
 
-`path` and `line` may be `null` for a general finding, which goes in the overall review body rather than as a line comment.
-`side` is `"RIGHT"` (new version) or `"LEFT"` (old version); omit or null for general findings.
+`path` and `line` may be `null` for a general finding not tied to a specific line; such a finding goes in the review body rather than as a line comment.
+`side` is `"RIGHT"` (new version) or `"LEFT"` (old version); omit or `null` for general findings.
 
-## `data/<task>/triage.json` (Triage of feedback on my PR)
+## triage.json (Triage of feedback on my PR)
+
+Written by the Bunk (Triage) agent to `data/<task>/triage.json`.
 
 ```json
 {
@@ -39,35 +42,42 @@ Phase 4 (`vessel-publish-review.sh`, `vessel-reply.sh`) reads them.
     {
       "id": "t1",
       "thread_id": "<GraphQL review thread id or null>",
-      "comment_id": 123456789,
+      "comment_id": 12345,
       "action": "fix|reply|pushback|followup",
-      "summary": "short description",
-      "draft_reply": "reply text or null",
-      "fix_plan": "implementation notes or null",
-      "ticket": {"summary": "ticket title", "description": "ticket body"} 
+      "summary": "…",
+      "draft_reply": "… or null",
+      "fix_plan": "… or null",
+      "ticket": {
+        "summary": "…",
+        "description": "…"
+      }
     }
   ]
 }
 ```
 
-`comment_id` is the REST API comment id (integer or null).
-`thread_id` is the GraphQL `PullRequestReviewThread.id` (string or null).
-`draft_reply` is non-null for `action: reply` and `action: pushback`.
-`fix_plan` is non-null for `action: fix`.
-`ticket` is non-null for `action: followup`.
+`thread_id` is the GraphQL review thread id when the item came from a review thread, or `null` for a standalone PR comment.
+`comment_id` is the REST comment id, or `null` when not applicable.
+`draft_reply` is non-null for `action: reply` and `action: pushback`; null otherwise.
+`fix_plan` is non-null for `action: fix`; null otherwise.
+`ticket` is present only for `followup` items.
 
-## `data/vessel/review-edits/<task>.json` (captain edits made in vessel)
+## review-edits/<task>.json (captain edits made in vessel)
+
+Written by the vessel TUI to `data/vessel/review-edits/<task>.json` when the captain edits a finding before publishing.
 
 ```json
 {
   "v": 1,
   "findings": {
-    "f1": {"body": "edited comment text", "drop": false}
+    "f1": {
+      "body": "…",
+      "drop": false
+    }
   }
 }
 ```
 
-Keys are finding `id` values from `findings.json`.
-`body` replaces the finding's body when submitting.
-`drop: true` excludes the finding from the submitted review.
-Absent keys mean no edit: use the original finding unchanged.
+`drop: true` removes a finding from the published review.
+Absent keys mean no edit: the original finding is used unchanged.
+This file is read by `vessel/bin/vessel-publish-review.sh` (Phase 4) before publishing.
