@@ -109,8 +109,15 @@ if [ "$yes" -ne 1 ]; then
   exit 0
 fi
 
-# Post each reply.
-echo "$reply_items" | jq -c '.[]' | while IFS= read -r item; do
+# Post each reply, tracking per-operation outcomes.
+# The loop reads from process substitution (not a pipeline) so counters
+# survive and failures can drive a nonzero exit for reconciliation.
+posted=0
+failed=0
+failed_ids=""
+skipped=0
+
+while IFS= read -r item; do
   id=$(echo "$item" | jq -r '.id')
   draft=$(echo "$item" | jq -r '.draft_reply')
   thread_id=$(echo "$item" | jq -r '.thread_id // empty')
@@ -118,11 +125,16 @@ echo "$reply_items" | jq -c '.[]' | while IFS= read -r item; do
 
   if [ -n "$comment_id_val" ] && [ "$comment_id_val" != "null" ]; then
     # Reply to a review thread comment via REST.
-    gh api --method POST \
+    if gh api --method POST \
       "/repos/$owner_repo/pulls/comments/$comment_id_val/replies" \
-      -f body="$draft" >/dev/null \
-      && echo "  posted reply to comment $comment_id_val ($id)" \
-      || echo "  warning: could not reply to comment $comment_id_val ($id)" >&2
+      -f body="$draft" >/dev/null; then
+      echo "  posted reply to comment $comment_id_val ($id)"
+      posted=$((posted + 1))
+    else
+      echo "  error: could not reply to comment $comment_id_val ($id)" >&2
+      failed=$((failed + 1))
+      failed_ids="${failed_ids:+$failed_ids, }$id"
+    fi
   elif [ -n "$thread_id" ] && [ "$thread_id" != "null" ]; then
     # For a GraphQL thread id, fetch the first comment id and reply to it.
     first_comment_id=$(gh api graphql \
@@ -134,31 +146,53 @@ echo "$reply_items" | jq -c '.[]' | while IFS= read -r item; do
         }
       }' -f id="$thread_id" \
       --jq '.data.node.comments.nodes[0].databaseId' 2>/dev/null || true)
-    if [ -n "$first_comment_id" ] && [ "$first_comment_id" != "null" ]; then
-      gh api --method POST \
-        "/repos/$owner_repo/pulls/comments/$first_comment_id/replies" \
-        -f body="$draft" >/dev/null \
-        && echo "  posted reply to thread $thread_id ($id)" \
-        || echo "  warning: could not reply to thread $thread_id ($id)" >&2
+    if [ -z "$first_comment_id" ] || [ "$first_comment_id" = "null" ]; then
+      echo "  error: could not find comment id for thread $thread_id ($id)" >&2
+      failed=$((failed + 1))
+      failed_ids="${failed_ids:+$failed_ids, }$id"
+    elif gh api --method POST \
+      "/repos/$owner_repo/pulls/comments/$first_comment_id/replies" \
+      -f body="$draft" >/dev/null; then
+      echo "  posted reply to thread $thread_id ($id)"
+      posted=$((posted + 1))
     else
-      echo "  warning: could not find comment id for thread $thread_id ($id)" >&2
+      echo "  error: could not reply to thread $thread_id ($id)" >&2
+      failed=$((failed + 1))
+      failed_ids="${failed_ids:+$failed_ids, }$id"
     fi
   else
     echo "  warning: item $id has no thread_id or comment_id, skipping" >&2
+    skipped=$((skipped + 1))
   fi
-done
+done < <(echo "$reply_items" | jq -c '.[]')
 
 # Re-request review unless suppressed.
+rerequest_failed=0
 if [ "$no_rerequest" -eq 0 ]; then
   reviewers=$(gh pr view "$pr_url" --json reviewRequests \
     --jq '[.reviewRequests[].login] | join(",")' 2>/dev/null || true)
   if [ -n "$reviewers" ] && [ "$reviewers" != "" ]; then
-    gh pr request-review "$pr_url" --reviewer "$reviewers" \
-      && echo "Re-requested review from: $reviewers" \
-      || echo "warning: could not re-request review" >&2
+    if gh pr request-review "$pr_url" --reviewer "$reviewers"; then
+      echo "Re-requested review from: $reviewers"
+    else
+      echo "error: could not re-request review" >&2
+      rerequest_failed=1
+    fi
   else
     echo "(no existing review requestees to re-request)"
   fi
+fi
+
+echo "Result: posted $posted reply(ies), failed $failed, skipped $skipped."
+if [ "$failed" -gt 0 ]; then
+  echo "error: failed to post replies for: $failed_ids" >&2
+  echo "Reconcile before retrying: posted replies above already landed and" >&2
+  echo "retrying them would duplicate actions. Retry only: $failed_ids" >&2
+  exit 1
+fi
+if [ "$rerequest_failed" -ne 0 ]; then
+  echo "error: replies posted but re-requesting review failed" >&2
+  exit 1
 fi
 
 echo "Done."
