@@ -23,7 +23,7 @@ use std::{
 };
 
 use ledger::Ledger;
-use runs::{Run, RunRecord, build_runs, load_run_records};
+use runs::{Run, RunRecord, UpdateRecord, build_runs, load_run_records, load_update_records};
 use snapshot::{Snapshot, load_snapshot};
 
 use crate::config::Config;
@@ -71,6 +71,7 @@ pub(crate) struct Fleet {
     snapshot_started: Option<Instant>,
     snapshot_wanted: bool,
     pub(crate) records: Vec<RunRecord>,
+    pub(crate) updates: Vec<UpdateRecord>,
     records_modified: Option<SystemTime>,
     state_modified: Option<SystemTime>,
     last_stat: Option<Instant>,
@@ -102,6 +103,7 @@ impl Fleet {
             snapshot_started: None,
             snapshot_wanted: true,
             records: Vec::new(),
+            updates: Vec::new(),
             records_modified: None,
             state_modified: None,
             last_stat: None,
@@ -167,6 +169,10 @@ impl Fleet {
             self.records_modified = records_modified;
             match load_run_records(&self.runs_file) {
                 Ok(records) => self.records = records,
+                Err(message) => self.notice = Some(message),
+            }
+            match load_update_records(&self.runs_file) {
+                Ok(updates) => self.updates = updates,
                 Err(message) => self.notice = Some(message),
             }
             changed = true;
@@ -236,7 +242,7 @@ impl Fleet {
     }
 
     fn rebuild(&mut self) {
-        self.runs = build_runs(&self.records, &self.ledger, self.snapshot());
+        self.runs = build_runs(&self.records, &self.updates, &self.ledger, self.snapshot());
     }
 
     pub(crate) fn open_peek(&mut self, task: &str) {

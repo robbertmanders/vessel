@@ -224,3 +224,75 @@ fn registered_check_keeps_supervision_running() {
         "FM_SUP_NEEDED should be true when vessel-radar is registered"
     );
 }
+
+#[test]
+fn direct_pr_paused_draft_allowance() {
+    // vessel instructs implement workers to report paused: instead of done: for draft PRs.
+    // This relies on the direct-PR contract in bin/fm-dod-lib.sh allowing a deliberately
+    // held draft when the worker reports paused:.
+    let dod = read("bin/fm-dod-lib.sh");
+    assert!(
+        dod.contains("paused"),
+        "bin/fm-dod-lib.sh no longer documents the paused: draft allowance"
+    );
+    assert!(
+        dod.contains("draft"),
+        "bin/fm-dod-lib.sh no longer mentions the draft PR case"
+    );
+    // Verify the paused: verb is defined in the classify lib, which the watcher uses.
+    let classify = read("bin/fm-classify-lib.sh");
+    assert!(
+        classify.contains("FM_CLASSIFY_PAUSED_VERB_DEFAULT"),
+        "bin/fm-classify-lib.sh no longer defines FM_CLASSIFY_PAUSED_VERB_DEFAULT"
+    );
+}
+
+#[test]
+fn teardown_accepts_pushed_branch_without_force() {
+    // vessel calls bin/fm-teardown.sh after pushing the PR branch, without --force.
+    // This relies on teardown treating pushed (remote-reachable) work as landed.
+    let teardown = read("bin/fm-teardown.sh");
+    assert!(
+        teardown.contains("reachable from any remote-tracking branch"),
+        "bin/fm-teardown.sh no longer documents the landed-by-remote rule"
+    );
+}
+
+#[test]
+fn paused_status_prefix_is_defined() {
+    // vessel relies on paused: being the vocabulary for a deliberate external wait,
+    // distinct from blocked:, so the watcher does not wedge-escalate an idle pane.
+    let classify = read("bin/fm-classify-lib.sh");
+    assert!(
+        classify.contains("FM_CLASSIFY_PAUSED_VERB_DEFAULT='paused'"),
+        "bin/fm-classify-lib.sh no longer defines the paused: verb"
+    );
+
+    // The record script must accept --update with state handed-off.
+    let runs_file =
+        std::env::temp_dir().join(format!("vessel-update-{}.jsonl", std::process::id()));
+    let _ = std::fs::remove_file(&runs_file);
+    let status =
+        std::process::Command::new(firstmate_root().join("vessel/bin/vessel-record-run.sh"))
+            .args([
+                "--update",
+                "implement-foo-1",
+                "--state",
+                "handed-off",
+                "--pr-url",
+                "https://github.com/acme/webapp/pull/9",
+                "--pr-head",
+                "abc123",
+            ])
+            .env("VESSEL_RUNS_FILE", &runs_file)
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap();
+    assert!(status.success(), "vessel-record-run.sh --update failed");
+    let record: serde_json::Value =
+        serde_json::from_str(std::fs::read_to_string(&runs_file).unwrap().trim()).unwrap();
+    assert_eq!(record["type"], "update");
+    assert_eq!(record["state"], "handed-off");
+    assert_eq!(record["task"], "implement-foo-1");
+    std::fs::remove_file(runs_file).ok();
+}

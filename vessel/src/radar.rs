@@ -119,7 +119,9 @@ fn check_impl(home: Option<PathBuf>) -> Result<Option<String>, String> {
         }
     }
 
-    if config.jira_enabled && let Ok(tickets) = load_jira_tickets() {
+    if config.jira_enabled
+        && let Ok(tickets) = load_jira_tickets()
+    {
         for ticket in &tickets {
             current.push(make_event("ticket-assigned", &ticket.key, &ticket.key));
         }
