@@ -14,7 +14,7 @@ mod runs;
 mod text;
 
 pub(crate) use jira::{format_time, jira_content_height, jira_ticket_rows};
-pub(crate) use overview::unix_now;
+pub(crate) use overview::{load_read_runs, unix_now};
 pub(super) use text::*;
 
 use crate::{
@@ -77,6 +77,8 @@ pub(crate) struct App {
     pub(crate) overview_section: OverviewSection,
     pub(crate) github_refreshed_at: Option<std::time::Instant>,
     pub(crate) context: ContextWriter,
+    /// Read run keys (`<task>@<created_at>`) hidden from the overview.
+    pub(crate) read_runs: BTreeSet<String>,
     /// A run whose live agent session `main` should open next.
     pub(crate) session_request: Option<(String, Option<u64>)>,
 }
@@ -291,6 +293,7 @@ impl App {
         }
         app.agent_store = Some(store);
         app.config = config;
+        app.read_runs = load_read_runs(&app.config);
         if !app.fleet.ledger_enabled {
             app.notice = Some(
                 "The fleet ledger is off, so finished runs have no history. Enable it with: touch config/fleet-ledger"
