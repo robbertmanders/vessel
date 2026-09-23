@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 
 use crate::config::write_atomic;
 
-pub(crate) const MODES: [&str; 7] = [
+pub(crate) const MODES: [&str; 9] = [
     "Implement",
     "Plan",
     "Review",
@@ -21,6 +21,8 @@ pub(crate) const MODES: [&str; 7] = [
     "Conflicts",
     "Ticket",
     "Description",
+    "Triage",
+    "Diagnose",
 ];
 pub(crate) const EFFORTS: [&str; 7] = ["", "low", "medium", "high", "xhigh", "max", "ultra"];
 /// Used when the firstmate home's adapter references cannot be read.
@@ -215,7 +217,7 @@ mod tests {
 
         let agents = store.load().unwrap();
 
-        assert_eq!(agents.len(), 7);
+        assert_eq!(agents.len(), 9);
         assert_eq!(agents[0].name, "Snoop");
         assert_eq!(agents[0].mode, "Review");
         assert_eq!(agents[0].harness, "pi");
@@ -249,10 +251,10 @@ mod tests {
         let reloaded = store.load().unwrap();
 
         assert_eq!(reloaded[0].model, "claude-opus-5");
-        assert_eq!(reloaded[7].name, "Bunk Moreland");
-        assert_eq!(reloaded[7].instructions, "Work the case.");
+        assert_eq!(reloaded[9].name, "Bunk Moreland");
+        assert_eq!(reloaded[9].instructions, "Work the case.");
         assert_eq!(
-            reloaded[7].instructions_file.as_deref(),
+            reloaded[9].instructions_file.as_deref(),
             Some("bunk-moreland.md")
         );
         fs::remove_dir_all(directory).ok();
