@@ -6,7 +6,7 @@ description: >-
   resolve PR merge conflicts, update a PR description, or create a Jira ticket, including loose references such
   as "this PR", "that ticket", or "my PRs" that point at what the captain sees in vessel; when a request names a vessel
   agent (Snoop, Slim Charles, Proposition Joe, Conflict Resolver, Stringer, Ticket Creator, PR Description, Bunk, Freamon, or
-  any agent in config/vessel/agents.json); for every inbox note that starts with `[vessel]`; and on every
+  any agent in config/vessel/agents.json); for "standup" or "what did I do yesterday" (the standup digest, section 11); for every inbox note that starts with `[vessel]`; and on every
   `check: vessel-radar:` notification (the Radar loop, section 9).
 user-invocable: false
 metadata:
@@ -378,3 +378,14 @@ See the outward-action policy in `vessel/docs/team-plan.md`.
   Default transitions: `pickup` → `"In Progress"`, `pr_open` → `"In Review"`.
 
 File format reference for findings.json, triage.json, and review-edits: `vessel/docs/prep-formats.md`.
+
+## 11. Standup digest
+
+**Trigger:** the captain asks for a standup, a daily digest, or "what did I do yesterday".
+This section and nothing else handles that request.
+Do not dispatch a scout or any other worker for it.
+
+Run `vessel standup [--since <YYYY-MM-DD|yesterday>]` in the firstmate checkout (it resolves the home the usual way) and relay its markdown as the answer.
+With no date in the request, run it without `--since` so it covers the prior day.
+The command is read-only: it never dispatches work and never writes to GitHub or Jira.
+When the captain asks for a different window, pass it through `--since` instead of filtering the output by hand.
