@@ -21,7 +21,10 @@ use crate::{
     agents::{Agent, AgentStore, harness_options},
     config::Config,
     context::ContextWriter,
-    firstmate::{Fleet, runs::Run},
+    firstmate::{
+        Fleet,
+        runs::{ReviewFinding, Run},
+    },
     github::{
         PullRequest, PullRequestDetail, ReviewPullRequest, load_pull_request_detail,
         load_pull_requests, load_review_pull_requests, ticket_key_from_title,
@@ -97,6 +100,8 @@ pub(crate) struct RunViewState {
     pub(crate) scroll: u16,
     pub(crate) brief: Option<String>,
     pub(crate) report: Option<String>,
+    /// Findings from `data/<task>/findings.json` with review-edits applied.
+    pub(crate) findings: Vec<ReviewFinding>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -106,6 +111,7 @@ pub(crate) enum RunViewFocus {
     Brief,
     Report,
     Terminal,
+    Findings,
 }
 
 #[derive(Default)]

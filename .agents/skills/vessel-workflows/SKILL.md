@@ -184,3 +184,23 @@ When a ship worker reports its PR - a `paused [at=…]: draft PR <url> held for 
    The `fm-captain-hold.sh` mechanics land in Phase 3; record the intent now.
 
 The vessel TUI shows the run as "in review" (blue `◑`) from this point until the ledger records a merge or the captain answers the proposal.
+
+## 9. Outward mechanics
+
+These scripts run only after the captain's explicit accept or command.
+Do not call them in worker briefs or from any automatic path.
+Firstmate calls them directly after the captain accepts a proposal.
+Each script prints its dry-run plan and requires `--yes` to act.
+See the outward-action policy in `vessel/docs/team-plan.md`.
+
+- **`vessel/bin/vessel-publish-review.sh --task <id> [--findings <id,...>] [--submit COMMENT|REQUEST_CHANGES|APPROVE] [--resolve-threads <id,...>] [--yes]`**:
+  Submit a pending GitHub review built from `data/<task>/findings.json`.
+  Applies captain edits from `data/vessel/review-edits/<task>.json` when present.
+  Refuses when the PR head moved since the review, or a pending review already exists.
+- **`vessel/bin/vessel-reply.sh --task <id> [--items <id,...>] [--no-rerequest] [--yes]`**:
+  Post draft replies from `data/<task>/triage.json` to PR threads and re-request review.
+- **`vessel/bin/vessel-jira.sh pickup|transition|comment|create --ticket <KEY> [options] [--yes]`**:
+  Wrap `acli jira workitem` using transition names from `jira_transitions` in `config/vessel/vessel.json`.
+  Default transitions: `pickup` → `"In Progress"`, `pr_open` → `"In Review"`.
+
+File format reference for findings.json, triage.json, and review-edits: `vessel/docs/prep-formats.md`.

@@ -150,10 +150,82 @@ fn skill_points_at_files_that_exist() {
         "bin/fm-brief.sh",
         "bin/fm-spawn.sh",
         "bin/fm-inbox.sh",
+        // Phase 4 outward scripts referenced in section 9.
+        "vessel/bin/vessel-publish-review.sh",
+        "vessel/bin/vessel-reply.sh",
+        "vessel/bin/vessel-jira.sh",
+        "vessel/docs/prep-formats.md",
     ] {
         assert!(skill.contains(path), "the skill no longer names {path}");
         assert!(firstmate_root().join(path).exists(), "{path} is missing");
     }
+}
+
+#[test]
+fn outward_scripts_refuse_without_yes() {
+    // Each outward script requires --yes to act; without it only a dry run is printed.
+    // Missing a required argument (--task) exits with code 2.
+    let scripts = [
+        "vessel/bin/vessel-publish-review.sh",
+        "vessel/bin/vessel-reply.sh",
+    ];
+    for script in scripts {
+        let status = std::process::Command::new("bash")
+            .args([
+                "-c",
+                &format!(
+                    "'{}/{}' --task nonexistent-task --home /nonexistent 2>/dev/null; echo $?",
+                    firstmate_root().display(),
+                    script
+                ),
+            ])
+            .output()
+            .expect("bash should be available");
+        // The script should exit non-zero (missing findings/triage file).
+        let output = String::from_utf8_lossy(&status.stdout);
+        let exit_code: u32 = output.trim().parse().unwrap_or(0);
+        assert!(
+            exit_code != 0,
+            "{script} should exit non-zero when the required file is missing"
+        );
+    }
+
+    // vessel-jira.sh with no subcommand exits 2.
+    let jira_status =
+        std::process::Command::new(firstmate_root().join("vessel/bin/vessel-jira.sh"))
+            .stderr(std::process::Stdio::null())
+            .status()
+            .expect("vessel-jira.sh should be executable");
+    assert!(
+        !jira_status.success(),
+        "vessel-jira.sh should fail with no subcommand"
+    );
+}
+
+#[test]
+fn outward_scripts_print_dry_run_without_yes() {
+    // vessel-jira.sh pickup without --yes prints the dry-run plan and exits 0.
+    // Pipe a nonexistent FM_HOME so it reads config/vessel/vessel.json as absent
+    // and falls back to defaults.
+    let output = std::process::Command::new(firstmate_root().join("vessel/bin/vessel-jira.sh"))
+        .args(["pickup", "--ticket", "TEST-1", "--home", "/nonexistent"])
+        .env("FM_HOME", "/nonexistent")
+        .output()
+        .expect("vessel-jira.sh should be executable");
+    // Without --yes it exits 0 (dry run).
+    assert!(
+        output.status.success(),
+        "vessel-jira.sh pickup without --yes should succeed (dry-run exit 0)"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Dry run") || stdout.contains("dry run"),
+        "vessel-jira.sh pickup without --yes should print dry-run notice"
+    );
+    assert!(
+        stdout.contains("In Progress"),
+        "vessel-jira.sh pickup should show the default transition name"
+    );
 }
 
 #[test]

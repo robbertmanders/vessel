@@ -158,6 +158,7 @@ fn focus_is_the_open_page() {
         scroll: 0,
         brief: None,
         report: None,
+        findings: Vec::new(),
     });
     let focus = app.context_focus();
     assert_eq!(focus["kind"], "run");

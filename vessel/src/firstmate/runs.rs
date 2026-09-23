@@ -13,6 +13,85 @@ use std::{
 
 use serde_json::Value;
 
+/// A single finding from a Snoop review scout (`data/<task>/findings.json`).
+/// Captain edits from `data/vessel/review-edits/<task>.json` are already applied.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ReviewFinding {
+    pub(crate) id: String,
+    pub(crate) severity: String,
+    pub(crate) path: Option<String>,
+    pub(crate) line: Option<u64>,
+    pub(crate) body: String,
+    /// True when the captain marked this finding as dropped in review-edits.
+    pub(crate) dropped: bool,
+}
+
+/// Loads and parses `data/<task>/findings.json`, applying any edits from
+/// `data/vessel/review-edits/<task>.json`. Returns an empty vec when the file
+/// is absent (not an error: the task may not be a review).
+pub(crate) fn load_review_findings(data_dir: &Path, task: &str) -> Vec<ReviewFinding> {
+    let findings_path = data_dir.join(task).join("findings.json");
+    let text = match fs::read_to_string(&findings_path) {
+        Ok(t) => t,
+        Err(_) => return Vec::new(),
+    };
+    let value: Value = match serde_json::from_str(&text) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+
+    let edits_path = data_dir
+        .join("vessel/review-edits")
+        .join(format!("{task}.json"));
+    let edits: Value = fs::read_to_string(&edits_path)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or(Value::Null);
+
+    let findings_arr = match value.get("findings").and_then(Value::as_array) {
+        Some(arr) => arr,
+        None => return Vec::new(),
+    };
+
+    findings_arr
+        .iter()
+        .filter_map(|f| {
+            let id = f.get("id")?.as_str()?.to_owned();
+            let edit = edits.get("findings").and_then(|m| m.get(&id));
+            let dropped = edit
+                .and_then(|e| e.get("drop"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let body = edit
+                .and_then(|e| e.get("body"))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .unwrap_or_else(|| {
+                    f.get("body")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_owned()
+                });
+            Some(ReviewFinding {
+                id,
+                severity: f
+                    .get("severity")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned(),
+                path: f
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_owned),
+                line: f.get("line").and_then(Value::as_u64),
+                body,
+                dropped,
+            })
+        })
+        .collect()
+}
+
 use super::{
     ledger::{Ledger, LedgerKind, TaskHistory},
     snapshot::{OpenDecision, Snapshot, SnapshotTask, status_verb_and_text},
