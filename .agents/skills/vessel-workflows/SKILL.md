@@ -223,7 +223,7 @@ An empty array means nothing to do; skip to the end of this section.
 Read `config/vessel/vessel.json` with `jq`, falling back to `vessel/defaults/vessel.json` when the user file is absent.
 The relevant keys are `autoprep.max_concurrent` (default 3) and `autoprep.<kind>` (default true for every kind).
 
-Count active preparation scouts: runs in `data/vessel/runs.jsonl` whose `workflow` is `triage` or `diagnose` and that have no matching `handed-off` update record, and whose firstmate task is not yet cleaned up.
+Count active preparation scouts: runs in `data/vessel/runs.jsonl` whose `workflow` is `triage`, `diagnose`, `review`, or `plan` and that have no matching `handed-off` update record, and whose firstmate task is not yet cleaned up.
 Compare against `max_concurrent`.
 
 While the away posture (`state/.afk-contract`) is present, preparation still runs.
