@@ -18,12 +18,14 @@ mod github;
 mod input;
 mod jira;
 mod radar;
+mod standup;
 mod ui;
 
 use app::{App, GitHubReviewFocus};
 
 const USAGE: &str = "usage: vessel [--home <firstmate-home>]
        vessel radar check|arm|disarm|pending|ack [--home <firstmate-home>]
+       vessel standup [--since <YYYY-MM-DD|yesterday>] [--home <firstmate-home>]
 
 A read-only view of what firstmate is doing, with Jira and GitHub alongside.
 The firstmate home is --home, $VESSEL_FM_HOME, $FM_HOME, or the nearest
@@ -31,13 +33,20 @@ firstmate checkout above the current directory.
 
 vessel radar monitors GitHub and Jira for events that need attention.
 Run `vessel radar arm` once to keep firstmate monitoring all day.
-Use `vessel radar pending [--json]` to list events waiting for firstmate.";
+Use `vessel radar pending [--json]` to list events waiting for firstmate.
+
+vessel standup prints a markdown digest: what finished since the given date,
+open proposals, runs under way, and your PRs waiting on others.";
 
 fn main() -> io::Result<()> {
     let all_args: Vec<String> = std::env::args().skip(1).collect();
 
     if all_args.first().map(String::as_str) == Some("radar") {
         return radar::run(&all_args[1..]);
+    }
+
+    if all_args.first().map(String::as_str) == Some("standup") {
+        return standup::run(&all_args[1..]);
     }
 
     let mut explicit_home = None;

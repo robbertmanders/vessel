@@ -54,6 +54,13 @@ Ask firstmate in plain words: "review https://github.com/acme/webapp/pull/42", "
 
 Delivery mode, merge authority, and supervision stay firstmate's. The request grammar for tools is in [docs/requests.md](docs/requests.md).
 
+## Standup digest
+
+`vessel standup [--since <YYYY-MM-DD|yesterday>]` prints a markdown digest with what finished since the given date, open proposals, runs under way, and your PRs waiting on others.
+The default window starts at local midnight yesterday.
+It is read-only: it never dispatches work and never writes to GitHub or Jira.
+Ask firstmate "standup" or "what did I do yesterday" and it runs this command and relays the digest.
+
 ## Configuration
 
 `config/vessel/agents.json` and `config/vessel/agents/*.md` hold the agents. They are created from `vessel/defaults/` on first run; edit them in Settings. Harnesses are firstmate's verified adapters (there is no Copilot adapter; the defaults use `pi` with `openrouter/meta/muse-spark-1.3-contributor`).

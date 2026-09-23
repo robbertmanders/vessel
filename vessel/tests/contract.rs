@@ -413,3 +413,122 @@ fn paused_status_prefix_is_defined() {
     assert_eq!(record["task"], "implement-foo-1");
     std::fs::remove_file(runs_file).ok();
 }
+
+fn vessel_binary() -> PathBuf {
+    option_env!("CARGO_BIN_EXE_vessel")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| firstmate_root().join("vessel/target/debug/vessel"))
+}
+
+fn standup_demo_home(tag: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("vessel-standup-{tag}-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    let status = std::process::Command::new(firstmate_root().join("vessel/tests/demo-home.sh"))
+        .arg(&dir)
+        .stdout(std::process::Stdio::null())
+        .status()
+        .expect("demo-home.sh should be executable");
+    assert!(status.success(), "demo-home.sh should build a fixture home");
+    dir
+}
+
+fn run_standup(home: &std::path::Path, extra: &[&str]) -> std::process::Output {
+    let home = home.to_string_lossy().into_owned();
+    let mut args = vec!["standup", "--home", &home];
+    args.extend(extra);
+    std::process::Command::new(vessel_binary())
+        .args(&args)
+        .output()
+        .expect("vessel standup should run")
+}
+
+#[test]
+fn standup_help_names_the_since_window() {
+    // The new Phase 5 surface: `vessel standup [--since]` and its default.
+    let output = std::process::Command::new(vessel_binary())
+        .args(["standup", "--help"])
+        .output()
+        .expect("vessel standup --help should run");
+    assert!(output.status.success());
+    let help = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        help.contains("--since"),
+        "standup --help should name --since"
+    );
+    assert!(
+        help.contains("yesterday"),
+        "standup --help should document the prior-day default"
+    );
+}
+
+#[test]
+fn standup_reports_the_demo_fleet_in_four_sections() {
+    let home = standup_demo_home("fleet");
+    let output = run_standup(&home, &["--since", "2020-01-01"]);
+    assert!(
+        output.status.success(),
+        "standup should succeed: {output:?}"
+    );
+    let digest = String::from_utf8_lossy(&output.stdout);
+    for section in [
+        "## Did",
+        "## Open proposals",
+        "## Runs under way",
+        "## My PRs waiting on others",
+    ] {
+        assert!(digest.contains(section), "standup is missing {section}");
+    }
+    assert!(
+        digest.contains("fix-flaky-ci"),
+        "Did should list merged work"
+    );
+    assert!(
+        digest.contains("implement-aa4fi-1234"),
+        "Runs under way should list the live implement run"
+    );
+    assert!(
+        digest.contains("review-webapp-42"),
+        "Runs under way should list the live review run"
+    );
+    // The demo home disables GitHub, so the PR section must say so plainly.
+    assert!(digest.contains("GitHub tracking is off."));
+    // The demo home holds nothing for the captain.
+    let proposals = digest
+        .split("## Open proposals")
+        .nth(1)
+        .expect("proposals section");
+    let proposals = proposals.split("## Runs under way").next().unwrap_or("");
+    assert!(
+        proposals.contains("- None."),
+        "empty proposals should render None"
+    );
+    fs::remove_dir_all(&home).ok();
+}
+
+#[test]
+fn standup_window_filters_finished_work_and_rejects_bad_dates() {
+    let home = standup_demo_home("window");
+    let output = run_standup(&home, &["--since", "2099-01-01"]);
+    assert!(
+        output.status.success(),
+        "standup should succeed: {output:?}"
+    );
+    let digest = String::from_utf8_lossy(&output.stdout);
+    let did = digest.split("## Did").nth(1).expect("Did section");
+    let did = did.split("## Open proposals").next().unwrap_or("");
+    assert!(
+        did.contains("- None."),
+        "a future window should show no finished work"
+    );
+    assert!(
+        !did.contains("fix-flaky-ci"),
+        "a future window should exclude old finished work"
+    );
+
+    let bad = run_standup(&home, &["--since", "someday"]);
+    assert!(
+        !bad.status.success(),
+        "standup should refuse an unparseable --since"
+    );
+    fs::remove_dir_all(&home).ok();
+}
