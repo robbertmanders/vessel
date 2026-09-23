@@ -117,10 +117,19 @@ Fill `## Captain's intent` with the ask and the gathered context (ticket key, ti
 Fill `## Firstmate spec` with an `Agent: <name>` line, then `Agent instructions:` followed by the agent's instructions (omit the block when empty), then the workflow's contract:
 
 - **implement**: implement the ticket as described (and follow the approved plan when one is given).
+  Open the PR as a **draft** and keep it a draft; do not mark it ready.
+  After pushing, append `paused [at=<epoch>]: draft PR <url> held for the captain` to the status file instead of `done:`.
+  The full `https://` PR URL must appear verbatim in that line.
 - **plan**: produce a concrete implementation plan for review in `report.md`. Inspect the repository as needed, but do not modify files.
 - **review**: check out the PR (`gh pr checkout <url> --detach`) in the scratch worktree, inspect the changes, and report actionable findings in `report.md`. Do not modify the code or submit a GitHub review.
-- **address**: work on the existing PR's head branch (`gh pr checkout <url>`), address the listed feedback, run the relevant tests, commit, and push to that same head branch. Do not open a new PR, do not merge or close the PR, and do not resolve or reply to review threads unless the captain asked.
-- **conflicts**: use `gh pr view` to identify the base branch, head branch, and head repository; merge the latest base branch into the checked-out PR branch; resolve every conflict preserving the intent of both sides; run the relevant tests; commit the resolution; push HEAD to the PR's actual head branch. Do not merge or close the PR.
+- **address**: work on the existing PR's head branch (`gh pr checkout <url>`), address the listed feedback, run the relevant tests, commit, and push to that same head branch.
+  Do not open a new PR, do not merge or close the PR, and do not resolve or reply to review threads unless the captain asked.
+  After pushing, append `done [at=<epoch>]: pushed to <url>` to the status file.
+  Nothing is merged and there is no merge poll.
+- **conflicts**: use `gh pr view` to identify the base branch, head branch, and head repository; merge the latest base branch into the checked-out PR branch; resolve every conflict preserving the intent of both sides; run the relevant tests; commit the resolution; push HEAD to the PR's actual head branch.
+  Do not merge or close the PR.
+  After pushing, append `done [at=<epoch>]: pushed to <url>` to the status file.
+  Nothing is merged and there is no merge poll.
 - **description**: inspect every commit and the complete diff from the base branch; update the PR body with `gh pr edit --body-file` so it accurately reflects all current changes, preserving useful context and removing stale claims (leave it unchanged if already accurate). Put the final body in `report.md`. Do not modify repository files, create commits, or submit a review.
 - **ticket**: explore the feature's repository (and relevant sibling projects) and create a concise, evidence-based Jira ticket under the feature with `acli jira workitem create` (check `--help`), including summary, problem or outcome, codebase evidence, implementation direction, acceptance criteria, and tests. Verify it and put the new key in `report.md`. Do not modify source files or create commits.
 - **free**: the captain's `prompt=` is the task.
@@ -146,4 +155,32 @@ vessel/bin/vessel-record-run.sh --task <id> --workflow <workflow> --agent "<name
 Include `--ticket` whenever a Jira key is known (also for PR workflows whose PR title names one) and `--repo`/`--pr`/`--pr-head` for every PR workflow.
 For an inbox request, acknowledge the note and reply with the task id through `bin/fm-inbox.sh` as usual.
 
-Everything after this point is ordinary firstmate supervision.
+Supervision continues as normal after the run record is written.
+When the worker reports the PR ready (a `paused:` line for `implement`, a `done:` line for `address` and `conflicts`), follow the Handoff section below instead of the ordinary merge path.
+
+## 8. Handoff
+
+When a ship worker reports its PR - a `paused [at=…]: draft PR <url> held for the captain` for `implement`, or `done [at=…]: pushed to <url>` for `address` and `conflicts` - carry out these steps in order:
+
+1. **Do not run `fm-pr-check.sh`.**
+   The merge poll is not armed for vessel ship tasks.
+
+2. **Record the handoff** by calling:
+   ```sh
+   vessel/bin/vessel-record-run.sh --update <task-id> --state handed-off \
+     --pr-url <url> --pr-head <headRefOid>
+   ```
+   Read the PR URL and head from the status line or from `gh pr view <url> --json url,headRefOid`.
+
+3. **Clean up** with `bin/fm-teardown.sh <task-id>`.
+   The branch is already pushed to the remote, so teardown accepts it as landed without `--force`.
+
+4. **Run the configured `pr_open` Jira transition.**
+   Look up the transition name at `jira_transitions.pr_open` in `config/vessel/vessel.json`.
+   Record the intent now; the Jira wrapper lands in Phase 4.
+
+5. **File the "mark ready and request reviewers" proposal.**
+   Hold a captain call via `bin/fm-captain-hold.sh hold <proposal-id> --title "Mark PR ready: <title>" --reason "Mark <url> ready and request review from CODEOWNERS or recent reviewers"`.
+   The `fm-captain-hold.sh` mechanics land in Phase 3; record the intent now.
+
+The vessel TUI shows the run as "in review" (blue `◑`) from this point until the ledger records a merge or the captain answers the proposal.

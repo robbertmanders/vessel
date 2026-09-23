@@ -79,6 +79,46 @@ pub(crate) fn load_run_records(path: &Path) -> Result<Vec<RunRecord>, String> {
     }
 }
 
+/// A post-spawn state update written by `vessel-record-run.sh --update`.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct UpdateRecord {
+    pub(crate) ts: u64,
+    pub(crate) task: String,
+    pub(crate) state: String,
+    pub(crate) pr_url: Option<String>,
+    pub(crate) pr_head: Option<String>,
+}
+
+pub(crate) fn parse_update_record(line: &str) -> Option<UpdateRecord> {
+    let value: Value = serde_json::from_str(line).ok()?;
+    if value.get("type").and_then(Value::as_str) != Some("update") {
+        return None;
+    }
+    let text = |field: &str| {
+        value
+            .get(field)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_owned)
+    };
+    Some(UpdateRecord {
+        ts: value.get("ts").and_then(Value::as_u64)?,
+        task: text("task")?,
+        state: text("state")?,
+        pr_url: text("pr_url"),
+        pr_head: text("pr_head"),
+    })
+}
+
+pub(crate) fn load_update_records(path: &Path) -> Result<Vec<UpdateRecord>, String> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(text.lines().filter_map(parse_update_record).collect()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(format!("Could not read {}: {error}", path.display())),
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub(crate) enum RunStatus {
     NeedsDecision,
@@ -89,6 +129,7 @@ pub(crate) enum RunStatus {
     Done,
     Merged,
     Completed,
+    InReview,
     Failed,
     Closed,
     Unknown,
@@ -105,6 +146,7 @@ impl RunStatus {
             Self::Done => "Done",
             Self::Merged => "Merged",
             Self::Completed => "Completed",
+            Self::InReview => "In review",
             Self::Failed => "Failed",
             Self::Closed => "Closed",
             Self::Unknown => "Unknown",
@@ -244,9 +286,10 @@ fn workflow_from_task(task: &str) -> Option<String> {
     .then(|| prefix.to_owned())
 }
 
-/// Joins run records, ledger history, and the live snapshot, newest first.
+/// Joins run records, update records, ledger history, and the live snapshot, newest first.
 pub(crate) fn build_runs(
     records: &[RunRecord],
+    updates: &[UpdateRecord],
     ledger: &Ledger,
     snapshot: Option<&Snapshot>,
 ) -> Vec<Run> {
@@ -269,6 +312,16 @@ pub(crate) fn build_runs(
         })
         .unwrap_or_default();
 
+    // Latest update record per task (handed-off state survives teardown).
+    let updates_by_task: BTreeMap<&str, &UpdateRecord> =
+        updates.iter().fold(BTreeMap::new(), |mut map, update| {
+            let entry = map.entry(update.task.as_str()).or_insert(update);
+            if update.ts > entry.ts {
+                *entry = update;
+            }
+            map
+        });
+
     let mut used_lives = BTreeSet::new();
     let mut runs = Vec::new();
 
@@ -282,6 +335,7 @@ pub(crate) fn build_runs(
     for (task, task_records) in &records_by_task {
         let lives = ledger.histories(task);
         let latest_record = task_records.iter().map(|record| record.ts).max();
+        let update = updates_by_task.get(task).copied();
         for record in task_records {
             let life_index = matching_life(lives, record.ts, &used_lives, task);
             if let Some(index) = life_index {
@@ -295,6 +349,7 @@ pub(crate) fn build_runs(
             runs.push(assemble(
                 task,
                 Some((*record).clone()),
+                is_latest.then_some(update).flatten(),
                 life,
                 snapshot_task,
                 &backlog_titles,
@@ -316,9 +371,13 @@ pub(crate) fn build_runs(
         let snapshot_task = (index + 1 == lives.len())
             .then(|| live.get(history.task.as_str()).copied())
             .flatten();
+        let update = (index + 1 == lives.len())
+            .then(|| updates_by_task.get(history.task.as_str()).copied())
+            .flatten();
         runs.push(assemble(
             &history.task,
             None,
+            update,
             Some(history),
             snapshot_task,
             &backlog_titles,
@@ -331,6 +390,7 @@ pub(crate) fn build_runs(
             runs.push(assemble(
                 task,
                 None,
+                updates_by_task.get(task).copied(),
                 None,
                 Some(snapshot_task),
                 &backlog_titles,
@@ -366,6 +426,7 @@ fn matching_life(
 fn assemble(
     task: &str,
     record: Option<RunRecord>,
+    update: Option<&UpdateRecord>,
     life: Option<&TaskHistory>,
     snapshot_task: Option<&SnapshotTask>,
     backlog_titles: &BTreeMap<&str, &str>,
@@ -392,15 +453,23 @@ fn assemble(
         .and_then(|task| task.kind.clone())
         .or_else(|| life.and_then(|life| life.kind.clone()));
 
+    let handed_off = update.is_some_and(|u| u.state == "handed-off");
     let (status, status_text) = match snapshot_task {
         Some(live) => live_status(live, &timeline),
-        None => ended_status(kind.as_deref(), merged.is_some(), cleaned_up_at, &timeline),
+        None => ended_status(
+            kind.as_deref(),
+            merged.is_some(),
+            cleaned_up_at,
+            handed_off,
+            &timeline,
+        ),
     };
 
     let merged_pr = merged.as_ref().and_then(|(_, pr)| pr.clone());
     let pr_url = record
         .as_ref()
         .and_then(|record| record.pr_url.clone())
+        .or_else(|| update.and_then(|u| u.pr_url.clone()))
         .or_else(|| snapshot_task.and_then(|task| task.pr_url.clone()))
         .or_else(|| merged_pr.clone());
     let parsed_pr = pr_url.as_deref().and_then(pull_request_from_url);
@@ -503,6 +572,7 @@ fn ended_status(
     kind: Option<&str>,
     merged: bool,
     cleaned_up_at: Option<u64>,
+    handed_off: bool,
     timeline: &[TimelineEntry],
 ) -> (RunStatus, Option<String>) {
     let latest = timeline.last();
@@ -515,6 +585,7 @@ fn ended_status(
         let status = match (kind, last_verb) {
             (_, Some(RunStatus::Failed)) => RunStatus::Failed,
             (Some("scout"), _) | (_, Some(RunStatus::Done)) => RunStatus::Completed,
+            _ if handed_off => RunStatus::InReview,
             _ => RunStatus::Closed,
         };
         return (status, text);
@@ -576,7 +647,12 @@ mod tests {
     #[test]
     fn finished_runs_keep_their_history_after_cleanup() {
         let ledger = ledger_with(FINISHED_REVIEW);
-        let runs = build_runs(&[record("review-webapp-42", "review", 1003)], &ledger, None);
+        let runs = build_runs(
+            &[record("review-webapp-42", "review", 1003)],
+            &[],
+            &ledger,
+            None,
+        );
 
         assert_eq!(runs.len(), 1);
         let run = &runs[0];
@@ -598,6 +674,7 @@ mod tests {
         let ledger = ledger_with("");
         let runs = build_runs(
             &[record("review-webapp-42", "review", 1790141000)],
+            &[],
             &ledger,
             Some(&snapshot),
         );
@@ -640,6 +717,7 @@ mod tests {
                 record("review-webapp-42", "review", 1003),
                 record("review-webapp-42", "review", 5002),
             ],
+            &[],
             &ledger,
             None,
         );
@@ -658,7 +736,7 @@ mod tests {
             r#"{"v":1,"ts":20,"event":"task.merged","task":"fix-login","via":"pr","pr":"https://github.com/acme/webapp/pull/7"}"#,
             "\n",
         ));
-        let runs = build_runs(&[], &ledger, None);
+        let runs = build_runs(&[], &[], &ledger, None);
 
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].status, RunStatus::Merged);
@@ -676,5 +754,69 @@ mod tests {
             pull_request_from_url("https://github.com/acme/webapp"),
             None
         );
+    }
+
+    #[test]
+    fn parses_update_records() {
+        let line = r#"{"v":1,"type":"update","ts":9000,"task":"implement-foo-1","state":"handed-off","pr_url":"https://github.com/acme/webapp/pull/9","pr_head":"deadbeef"}"#;
+        let update = parse_update_record(line).unwrap();
+        assert_eq!(update.task, "implement-foo-1");
+        assert_eq!(update.state, "handed-off");
+        assert_eq!(
+            update.pr_url.as_deref(),
+            Some("https://github.com/acme/webapp/pull/9")
+        );
+        assert_eq!(update.pr_head.as_deref(), Some("deadbeef"));
+        assert!(
+            parse_update_record(r#"{"v":1,"ts":1,"task":"x","workflow":"implement"}"#).is_none()
+        );
+    }
+
+    #[test]
+    fn handed_off_run_shows_in_review_after_cleanup() {
+        const HANDED_OFF_LEDGER: &str = concat!(
+            r#"{"v":1,"ts":2000,"event":"task.dispatched","task":"implement-foo-1","kind":"ship","project":"webapp","harness":"pi","model":null}"#,
+            "\n",
+            r#"{"v":1,"ts":2100,"event":"task.status","task":"implement-foo-1","state":"paused","key":null,"text":"draft PR held for the captain"}"#,
+            "\n",
+            r#"{"v":1,"ts":2200,"event":"task.cleaned_up","task":"implement-foo-1"}"#,
+            "\n",
+        );
+        let ledger = ledger_with(HANDED_OFF_LEDGER);
+        let run_record = record("implement-foo-1", "implement", 2001);
+        let update = UpdateRecord {
+            ts: 2150,
+            task: "implement-foo-1".into(),
+            state: "handed-off".into(),
+            pr_url: Some("https://github.com/acme/webapp/pull/9".into()),
+            pr_head: Some("deadbeef".into()),
+        };
+
+        let runs = build_runs(&[run_record], &[update], &ledger, None);
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].status, RunStatus::InReview);
+        assert_eq!(
+            runs[0].pr_url.as_deref(),
+            Some("https://github.com/acme/webapp/pull/9")
+        );
+        assert!(!runs[0].is_active());
+
+        // Merged overrides InReview.
+        let merged_ledger = ledger_with(concat!(
+            r#"{"v":1,"ts":2000,"event":"task.dispatched","task":"implement-foo-1","kind":"ship","project":"webapp","harness":"pi","model":null}"#,
+            "\n",
+            r#"{"v":1,"ts":2300,"event":"task.merged","task":"implement-foo-1","via":"pr","pr":"https://github.com/acme/webapp/pull/9"}"#,
+            "\n",
+        ));
+        let run_record2 = record("implement-foo-1", "implement", 2001);
+        let update2 = UpdateRecord {
+            ts: 2150,
+            task: "implement-foo-1".into(),
+            state: "handed-off".into(),
+            pr_url: None,
+            pr_head: None,
+        };
+        let runs2 = build_runs(&[run_record2], &[update2], &merged_ledger, None);
+        assert_eq!(runs2[0].status, RunStatus::Merged);
     }
 }

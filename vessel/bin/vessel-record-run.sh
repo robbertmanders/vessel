@@ -10,25 +10,31 @@
 #
 # Usage:
 #   vessel-record-run.sh --task <id> --workflow <workflow> [options]
-# Options:
+#   vessel-record-run.sh --update <task> --state <state> [--pr-url <url>] [--pr-head <sha>]
+# Options (spawn record):
 #   --agent <name> --harness <name> --model <name> --effort <level>
 #   --project <name> --title <text>
 #   --ticket <KEY> --repo <owner/repo> --pr <number> --pr-url <url> --pr-head <sha>
 #   --plan-task <task-id> --request-id <id>
 # Workflows: implement plan review address conflicts description ticket free
+# Update states: handed-off
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_HOME="${FM_HOME:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 RUNS="${VESSEL_RUNS_FILE:-$FM_HOME/data/vessel/runs.jsonl}"
 
-usage() { sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//' >&2; }
+usage() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//' >&2; }
 
+mode="spawn"
 task="" workflow="" agent="" harness="" model="" effort="" project="" title=""
 ticket="" repo="" pr="" pr_url="" pr_head="" plan_task="" request_id=""
+update_task="" update_state=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
+    --update) mode="update"; update_task="$2"; shift 2 ;;
+    --state) update_state="$2"; shift 2 ;;
     --task) task="$2"; shift 2 ;;
     --workflow) workflow="$2"; shift 2 ;;
     --agent) agent="$2"; shift 2 ;;
@@ -49,6 +55,29 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+command -v jq >/dev/null || { echo "vessel-record-run: jq is required" >&2; exit 1; }
+mkdir -p "$(dirname "$RUNS")"
+
+if [ "$mode" = "update" ]; then
+  if [ -z "$update_task" ] || [ -z "$update_state" ]; then
+    echo "vessel-record-run: --update and --state are required together" >&2
+    exit 2
+  fi
+  case "$update_state" in
+    handed-off) ;;
+    *) echo "vessel-record-run: unknown update state: $update_state" >&2; exit 2 ;;
+  esac
+  jq -nc \
+    --arg task "$update_task" --arg state "$update_state" \
+    --arg pr_url "$pr_url" --arg pr_head "$pr_head" \
+    --argjson ts "$(date +%s)" '
+    def opt: if . == "" then null else . end;
+    {v: 1, type: "update", ts: $ts, task: $task, state: $state,
+     pr_url: ($pr_url|opt), pr_head: ($pr_head|opt)}' >> "$RUNS"
+  echo "recorded update $update_task ($update_state) in $RUNS"
+  exit 0
+fi
+
 if [ -z "$task" ] || [ -z "$workflow" ]; then
   echo "vessel-record-run: --task and --workflow are required" >&2
   exit 2
@@ -61,9 +90,7 @@ if [ -n "$pr" ] && ! [ "$pr" -eq "$pr" ] 2>/dev/null; then
   echo "vessel-record-run: --pr must be a number" >&2
   exit 2
 fi
-command -v jq >/dev/null || { echo "vessel-record-run: jq is required" >&2; exit 1; }
 
-mkdir -p "$(dirname "$RUNS")"
 jq -nc \
   --arg task "$task" --arg workflow "$workflow" --arg agent "$agent" \
   --arg harness "$harness" --arg model "$model" --arg effort "$effort" \
